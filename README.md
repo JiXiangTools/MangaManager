@@ -24,7 +24,7 @@ MangaManager is designed for users who want to manage, read, translate, and expo
 
 ## Project Status
 
-This project is under active development. The current app version is `1.0.0`.
+This project is under active development. The current app version is `1.0.1`.
 
 The repository currently contains the application source, tests, and Windows packaging scripts. Before publishing as a public open-source project, review project governance documents if needed.
 
@@ -49,22 +49,44 @@ data/
 
 ## Requirements
 
-For local development:
+For the packaged Windows app:
+
+- Windows build machine
+- Node.js 18+
+- Python runtime copied into `windows/runtime/python`
+- PostgreSQL runtime copied into `windows/runtime/postgresql`
+
+For local source development:
 
 - Python 3.11+
 - Node.js 18+
 - PostgreSQL 16+ for production-like development
 - Docker, optional, for local PostgreSQL
 
-For Windows packaging:
-
-- Windows build machine
-- Python runtime copied into `windows/runtime/python`
-- PostgreSQL runtime copied into `windows/runtime/postgresql`
-
 ## Quick Start
 
-Start PostgreSQL:
+The primary usage path is to build a Windows ZIP and run MangaManager through the Windows app. The app starts the embedded PostgreSQL database and FastAPI backend service automatically.
+
+Prepare the embedded runtime on a Windows build machine:
+
+```powershell
+cd windows
+npm run prepare:runtime -- -PythonRoot "C:\Python311" -PostgresRoot "C:\PostgreSQL\16"
+```
+
+Build the Windows ZIP:
+
+```bash
+cd windows
+npm install
+npm run dist:win:zip
+```
+
+Extract the generated `windows/dist/MangaManager-<version>-win-x64.zip`, then run `MangaManager.exe`. On first launch, the app initializes PostgreSQL under `data/postgres` next to the portable app, starts the backend service, waits for `/api/health`, and loads the local web UI.
+
+## Local Development
+
+For source development without packaging, start PostgreSQL manually:
 
 ```bash
 docker compose up -d postgres
@@ -100,7 +122,7 @@ npm run build
 
 ## Windows Desktop Client
 
-The Electron client starts the local FastAPI service, waits for `/api/health`, and then loads the local web UI. In desktop mode, API requests include the desktop client header, so the Windows app does not require the web temporary password. Browser and LAN access still require the temporary password.
+The Electron client is the normal runtime entrypoint for packaged use. It starts the embedded PostgreSQL process when needed, starts the local FastAPI service, waits for `/api/health`, and then loads the local web UI. In desktop mode, API requests include the desktop client header, so the Windows app does not require the web temporary password. Browser and LAN access still require the temporary password.
 
 Run the desktop client in development:
 
@@ -125,7 +147,7 @@ windows/runtime/
     bin/createdb.exe
 ```
 
-Prepare the runtime on a Windows build machine:
+Prepare the runtime on a Windows build machine before creating the ZIP:
 
 ```powershell
 cd windows
@@ -148,7 +170,7 @@ npm install
 npm run dist:win:zip
 ```
 
-`npm run dist:win:zip` builds the frontend, verifies the embedded runtime, and creates a Windows ZIP package with Electron Builder.
+`npm run dist:win:zip` builds the frontend, verifies the embedded runtime, and creates a Windows ZIP package with Electron Builder. Distribute this ZIP to Windows users; they should extract it and launch `MangaManager.exe` instead of starting PostgreSQL or the backend manually.
 
 ## Translation
 

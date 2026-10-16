@@ -16,7 +16,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -47,13 +48,20 @@ button.secondary,
 }
 
 input,
-select {
+select,
+textarea {
   min-height: 36px;
   border: 1px solid #c8d3d6;
   border-radius: 6px;
   padding: 0 10px;
   background: white;
   color: #1d252c;
+}
+
+textarea {
+  min-height: 104px;
+  padding: 10px;
+  resize: vertical;
 }
 
 .auth-shell {
@@ -156,21 +164,37 @@ select {
 }
 
 .top-actions,
+.app-nav,
 .inline,
 .toolband,
 .translate-bar,
 .translation-account,
-.settings-strip {
+.settings-strip,
+.settings-row {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
 
+.app-nav {
+  justify-content: center;
+}
+
+.nav-button {
+  color: #1d252c;
+  background: white;
+  border-color: #d3dcdf;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr);
   min-height: 0;
+}
+
+.workspace.single-workspace {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .sidebar {
@@ -192,9 +216,31 @@ h2 {
   margin: 0 0 12px;
 }
 
+h3 {
+  font-size: 13px;
+  margin: 0 0 8px;
+  color: #4f6269;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .stack {
   display: grid;
   gap: 8px;
+}
+
+.sidebar-section {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #d6dedf;
+  border-radius: 8px;
+  background: white;
+}
+
+.sidebar-section + .sidebar-section,
+.sidebar-section + .list {
+  margin-top: 12px;
 }
 
 .list,
@@ -209,6 +255,21 @@ h2 {
 .chip {
   justify-content: flex-start;
   width: 100%;
+}
+
+.row {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+}
+
+.row small {
+  overflow: hidden;
+  color: #6a7b81;
+  font-size: 11px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .library-item {
@@ -253,6 +314,86 @@ h2 {
   justify-content: space-between;
   gap: 16px;
   align-items: flex-start;
+}
+
+.settings-page,
+.settings-grid {
+  min-width: 0;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.settings-panel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #d6dedf;
+  border-radius: 8px;
+  background: white;
+}
+
+.settings-panel-wide {
+  grid-column: span 2;
+}
+
+.settings-panel label {
+  display: grid;
+  gap: 6px;
+  color: #607077;
+  font-size: 13px;
+}
+
+.bulk-manga-list {
+  display: grid;
+  gap: 6px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid #dce5e7;
+  border-radius: 6px;
+  background: #f8fafb;
+}
+
+.bulk-manga-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  background: white;
+}
+
+.bulk-manga-item input {
+  min-height: auto;
+}
+
+.bulk-manga-item span {
+  display: grid;
+  gap: 2px;
+}
+
+.bulk-manga-item small {
+  overflow: hidden;
+  color: #6a7b81;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manga-editor {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(160px, 1fr) minmax(150px, 0.8fr) minmax(130px, 0.7fr) minmax(160px, 1fr) auto;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 10px;
+  border: 1px solid #d6dedf;
+  border-radius: 8px;
+  background: white;
 }
 
 .summary-strip {
@@ -339,6 +480,11 @@ h2 {
 
 .translate-bar {
   align-items: stretch;
+}
+
+.inline-context {
+  margin: 0;
+  align-self: center;
 }
 
 .translation-account {
@@ -501,13 +647,10 @@ h2 {
   position: sticky;
   top: 0;
   z-index: 30;
-  width: fit-content;
-  max-width: calc(100% - 16px);
-  display: flex;
+  width: min(820px, calc(100% - 16px));
+  display: grid;
   justify-content: center;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 8px;
   margin: 0 auto -48px;
   padding: 8px;
   border: 1px solid rgba(119, 145, 154, 0.65);
@@ -518,6 +661,23 @@ h2 {
   pointer-events: none;
   transform: translateY(-8px);
   transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.reader-nav-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.reader-options-row {
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(119, 145, 154, 0.38);
+}
+
+.reader-chapter-row .reader-chapter-select {
+  flex: 1 1 260px;
 }
 
 .reader-chrome-visible .reader-nav,
@@ -532,28 +692,18 @@ h2 {
 }
 
 .reader-language-select,
+.reader-chapter-select,
 .reader-mode-select {
   min-width: 150px;
   border-color: #77919a;
 }
 
-.reader-mode-select {
-  min-width: 110px;
+.reader-chapter-select {
+  min-width: min(280px, 70vw);
 }
 
-.reader-page-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 36px;
-  min-width: 58px;
-  padding: 0 10px;
-  border: 1px solid rgba(119, 145, 154, 0.65);
-  border-radius: 6px;
-  color: #e9f1f2;
-  background: rgba(38, 50, 60, 0.78);
-  font-size: 13px;
-  font-weight: 700;
+.reader-mode-select {
+  min-width: 110px;
 }
 
 .strip-reader {
@@ -705,6 +855,23 @@ h2 {
 }
 
 @media (max-width: 900px) {
+  .app-shell {
+    grid-template-rows: auto 1fr;
+  }
+
+  .topbar {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .brand,
+  .top-actions,
+  .app-nav {
+    justify-content: center;
+  }
+
   .workspace {
     grid-template-columns: 1fr;
   }
@@ -718,6 +885,18 @@ h2 {
     display: grid;
   }
 
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-panel-wide {
+    grid-column: auto;
+  }
+
+  .manga-editor {
+    grid-template-columns: 1fr;
+  }
+
   .summary-strip {
     min-width: 0;
     grid-template-columns: repeat(2, 1fr);
@@ -726,5 +905,58 @@ h2 {
   .toolband > *,
   .translate-bar > * {
     flex: 1 1 160px;
+  }
+
+  .reader {
+    margin: 0 -16px -16px;
+    min-height: calc(100vh - 150px);
+    border-radius: 0;
+    padding: 8px;
+  }
+
+  .reader-nav {
+    position: fixed;
+    inset: auto 8px 8px;
+    width: auto;
+    max-width: none;
+    margin: 0;
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+    gap: 6px;
+  }
+
+  .reader-nav-row {
+    justify-content: stretch;
+  }
+
+  .reader-nav-row > * {
+    flex: 1 1 132px;
+  }
+
+  .reader-chapter-select,
+  .reader-language-select,
+  .reader-mode-select {
+    min-width: 0;
+  }
+
+  .strip-reader .reader-pages .page,
+  .page-reader .reader-pages .page {
+    width: 100%;
+  }
+
+  .page-reader .reader-pages {
+    min-height: calc(100vh - 210px);
+    padding: 0 42px 88px;
+  }
+
+  .strip-reader .reader-pages {
+    padding-bottom: 96px;
+  }
+
+  .page-turn {
+    width: 36px;
+    height: 96px;
+    min-height: 96px;
   }
 }

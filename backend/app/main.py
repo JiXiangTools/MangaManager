@@ -1,5 +1,6 @@
 import mimetypes
 import os
+import re
 import shutil
 import logging
 import secrets
@@ -103,6 +104,17 @@ def _safe_sort_key(path: Path) -> str:
     return path.name.casefold()
 
 
+def _chapter_sort_key(path: Path) -> tuple[int, float, str]:
+    match = re.search(r"\d+(?:\.\d+)?", path.name)
+    if not match:
+        return (1, 0, path.name.casefold())
+    try:
+        number = float(match.group(0))
+    except ValueError:
+        number = 0
+    return (0, number, path.name.casefold())
+
+
 def _asset_url(path: str, request: Request, settings: Settings) -> str:
     if request.headers.get("x-mangamanager-client") != "desktop" or not settings.desktop_token:
         return path
@@ -162,11 +174,13 @@ async def create_manga_with_cover(
     name: str = Form(...),
     homepage: str = Form(""),
     default_language: str = Form(DEFAULT_LANGUAGE),
+    category: str = Form(""),
+    tags: str = Form(""),
     cover_image: UploadFile | None = File(None),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings)
 ) -> models.Manga:
-    manga = models.Manga(name=name, homepage=homepage, default_language=default_language)
+    manga = models.Manga(name=name, homepage=homepage, default_language=default_language, category=category, tags=tags)
     db.add(manga)
     db.flush()
     if cover_image and cover_image.filename:
@@ -194,7 +208,7 @@ def import_folder(
 
     chapter_dirs = sorted(
         [item for item in root.iterdir() if item.is_dir() and not _is_hidden_path(item)],
-        key=_safe_sort_key
+        key=_chapter_sort_key
     )
     chapters: list[tuple[Path, list[Path]]] = []
     total_images = 0
@@ -266,6 +280,20 @@ def get_manga(manga_id: str, db: Session = Depends(get_db)) -> models.Manga:
     return manga
 
 
+@app.patch("/api/manga/{manga_id}", response_model=schemas.MangaOut, dependencies=[Depends(web_auth)])
+def update_manga(manga_id: str, payload: schemas.MangaUpdate, db: Session = Depends(get_db)) -> models.Manga:
+    manga = db.get(models.Manga, manga_id)
+    if not manga:
+        raise HTTPException(status_code=404, detail="manga not found")
+    values = payload.model_dump(exclude_unset=True)
+    for key, value in values.items():
+        if value is not None:
+            setattr(manga, key, value)
+    db.commit()
+    db.refresh(manga)
+    return manga
+
+
 @app.delete("/api/manga/{manga_id}", dependencies=[Depends(web_auth)])
 def delete_manga(manga_id: str, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)) -> dict[str, bool]:
     manga = db.get(models.Manga, manga_id)
@@ -314,6 +342,20 @@ def create_chapter(manga_id: str, payload: schemas.ChapterCreate, db: Session = 
         raise HTTPException(status_code=404, detail="manga not found")
     chapter = models.Chapter(manga_id=manga_id, **payload.model_dump())
     db.add(chapter)
+    db.commit()
+    db.refresh(chapter)
+    return chapter
+
+
+@app.patch("/api/chapters/{chapter_id}", response_model=schemas.ChapterOut, dependencies=[Depends(web_auth)])
+def update_chapter(chapter_id: str, payload: schemas.ChapterUpdate, db: Session = Depends(get_db)) -> models.Chapter:
+    chapter = db.get(models.Chapter, chapter_id)
+    if not chapter:
+        raise HTTPException(status_code=404, detail="chapter not found")
+    values = payload.model_dump(exclude_unset=True)
+    for key, value in values.items():
+        if value is not None:
+            setattr(chapter, key, value)
     db.commit()
     db.refresh(chapter)
     return chapter

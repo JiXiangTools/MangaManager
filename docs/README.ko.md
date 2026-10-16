@@ -24,7 +24,7 @@ MangaManager는 한 대의 컴퓨터에서 개인 만화 라이브러리를 관�
 
 ## 프로젝트 상태
 
-이 프로젝트는 활발히 개발 중입니다. 현재 앱 버전은 `1.0.0`입니다.
+이 프로젝트는 활발히 개발 중입니다. 현재 앱 버전은 `1.0.1`입니다.
 
 현재 저장소에는 애플리케이션 소스, 테스트, Windows 패키징 스크립트가 포함되어 있습니다. 공개 오픈 소스 프로젝트로 배포하기 전에 필요한 경우 프로젝트 거버넌스 문서를 검토하세요.
 
@@ -49,22 +49,44 @@ data/
 
 ## 요구 사항
 
-로컬 개발:
+패키징된 Windows 앱:
+
+- Windows 빌드 머신
+- Node.js 18+
+- `windows/runtime/python`에 복사된 Python 런타임
+- `windows/runtime/postgresql`에 복사된 PostgreSQL 런타임
+
+로컬 소스 개발:
 
 - Python 3.11+
 - Node.js 18+
 - 프로덕션과 유사한 개발을 위한 PostgreSQL 16+
 - 로컬 PostgreSQL용 Docker, 선택 사항
 
-Windows 패키징:
-
-- Windows 빌드 머신
-- `windows/runtime/python`에 복사된 Python 런타임
-- `windows/runtime/postgresql`에 복사된 PostgreSQL 런타임
-
 ## 빠른 시작
 
-PostgreSQL을 시작합니다.
+기본 사용 경로는 Windows ZIP을 빌드한 뒤 Windows 앱으로 MangaManager를 실행하는 것입니다. 앱은 내장 PostgreSQL 데이터베이스와 FastAPI 백엔드 서비스를 자동으로 시작합니다.
+
+Windows 빌드 머신에서 내장 런타임을 준비합니다.
+
+```powershell
+cd windows
+npm run prepare:runtime -- -PythonRoot "C:\Python311" -PostgresRoot "C:\PostgreSQL\16"
+```
+
+Windows ZIP을 빌드합니다.
+
+```bash
+cd windows
+npm install
+npm run dist:win:zip
+```
+
+생성된 `windows/dist/MangaManager-<version>-win-x64.zip`을 압축 해제한 뒤 `MangaManager.exe`를 실행합니다. 첫 실행 시 앱은 포터블 앱 옆의 `data/postgres` 아래에 PostgreSQL을 초기화하고, 백엔드 서비스를 시작하고, `/api/health`를 기다린 다음 로컬 Web UI를 로드합니다.
+
+## 로컬 개발
+
+패키징 없이 소스 개발을 하려면 PostgreSQL을 수동으로 시작합니다.
 
 ```bash
 docker compose up -d postgres
@@ -100,7 +122,7 @@ npm run build
 
 ## Windows 데스크톱 클라이언트
 
-Electron 클라이언트는 로컬 FastAPI 서비스를 시작하고 `/api/health`를 기다린 다음 로컬 Web UI를 로드합니다. 데스크톱 모드에서는 API 요청에 데스크톱 클라이언트 헤더가 포함되므로 Windows 앱에는 Web 임시 비밀번호가 필요하지 않습니다. 브라우저와 LAN 접근에는 여전히 임시 비밀번호가 필요합니다.
+Electron 클라이언트는 패키징된 사용 환경의 일반 실행 진입점입니다. 필요할 때 내장 PostgreSQL 프로세스를 시작하고, 로컬 FastAPI 서비스를 시작하고, `/api/health`를 기다린 다음 로컬 Web UI를 로드합니다. 데스크톱 모드에서는 API 요청에 데스크톱 클라이언트 헤더가 포함되므로 Windows 앱에는 Web 임시 비밀번호가 필요하지 않습니다. 브라우저와 LAN 접근에는 여전히 임시 비밀번호가 필요합니다.
 
 개발 모드로 데스크톱 클라이언트를 실행합니다.
 
@@ -125,7 +147,7 @@ windows/runtime/
     bin/createdb.exe
 ```
 
-Windows 빌드 머신에서 런타임을 준비합니다.
+ZIP을 만들기 전에 Windows 빌드 머신에서 런타임을 준비합니다.
 
 ```powershell
 cd windows
@@ -148,7 +170,7 @@ npm install
 npm run dist:win:zip
 ```
 
-`npm run dist:win:zip`은 프론트엔드를 빌드하고, 내장 런타임을 검증한 뒤 Electron Builder로 Windows ZIP 패키지를 생성합니다.
+`npm run dist:win:zip`은 프론트엔드를 빌드하고, 내장 런타임을 검증한 뒤 Electron Builder로 Windows ZIP 패키지를 생성합니다. 이 ZIP을 Windows 사용자에게 배포하세요. 사용자는 압축을 풀고 `MangaManager.exe`를 실행하면 되며 PostgreSQL이나 백엔드를 수동으로 시작할 필요가 없습니다.
 
 ## 번역
 

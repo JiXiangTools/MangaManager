@@ -154,6 +154,33 @@ def test_manga_cover_upload_and_fetch() -> None:
         assert cover.content[:8] == b"\x89PNG\r\n\x1a\n"
 
 
+def test_manga_and_chapter_metadata_can_be_updated() -> None:
+    with TestClient(app) as client:
+        login(client)
+        manga = client.post(
+            "/api/manga",
+            json={"name": "Meta Book", "homepage": "", "default_language": "en", "category": "Action", "tags": "hero"}
+        ).json()
+        assert manga["category"] == "Action"
+        assert manga["tags"] == "hero"
+
+        updated = client.patch(
+            f"/api/manga/{manga['id']}",
+            json={"name": "Meta Book 2", "category": "Drama", "tags": "hero, color"}
+        )
+        assert updated.status_code == 200
+        updated_body = updated.json()
+        assert updated_body["name"] == "Meta Book 2"
+        assert updated_body["category"] == "Drama"
+        assert updated_body["tags"] == "hero, color"
+
+        chapter = client.post(f"/api/manga/{manga['id']}/chapters", json={"title": "Old", "number": "1", "sort_order": 1}).json()
+        renamed = client.patch(f"/api/chapters/{chapter['id']}", json={"title": "New", "number": "1.5"})
+        assert renamed.status_code == 200
+        assert renamed.json()["title"] == "New"
+        assert renamed.json()["number"] == "1.5"
+
+
 def test_desktop_folder_import_counts_only_visible_images(tmp_path: Path) -> None:
     root = tmp_path / "Folder Book"
     chapter = root / "Chapter 1"
@@ -196,6 +223,25 @@ def test_desktop_folder_import_enforces_image_limit(tmp_path: Path) -> None:
         )
         assert response.status_code == 400
         assert "maximum is 1" in response.text
+
+
+def test_desktop_folder_import_sorts_chapters_by_number_in_folder_name(tmp_path: Path) -> None:
+    root = tmp_path / "Numbered Book"
+    for chapter_name in ("Chapter 10", "Chapter 2", "Chapter 1"):
+        chapter = root / chapter_name
+        chapter.mkdir(parents=True)
+        (chapter / "page-001.png").write_bytes(image_bytes())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/desktop/import-folder",
+            headers={"X-MangaManager-Client": "desktop"},
+            json={"folder_path": str(root), "default_language": "en", "max_images": 10}
+        )
+        assert response.status_code == 200
+        manga = response.json()
+        chapters = client.get(f"/api/manga/{manga['id']}/chapters", headers={"X-MangaManager-Client": "desktop"}).json()
+        assert [chapter["title"] for chapter in chapters] == ["Chapter 1", "Chapter 2", "Chapter 10"]
 
 
 def test_chapter_order_can_be_rearranged() -> None:

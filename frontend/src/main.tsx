@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BookOpen, ChevronLeft, ChevronRight, Download, ExternalLink, FolderOpen, FolderPlus, GripVertical, Languages, Maximize2, Minimize2, Play, Trash2, Upload } from 'lucide-react';
+import { BookOpen, ChevronLeft, ChevronRight, Download, ExternalLink, FolderOpen, FolderPlus, GripVertical, Languages, Library, Maximize2, Minimize2, Pencil, Play, Settings, Tags, Trash2, Upload } from 'lucide-react';
 import { api, Catalogs, Chapter, Manga, ReadResponse, TranslatePayload, TranslationCredentials, isDesktopRuntime } from './api';
 import { formatT, langDir, t, UiLang, uiLanguages } from './i18n';
 import product from '../../shared/product.json';
@@ -12,11 +12,17 @@ const MIN_TRANSLATION_CONCURRENCY = 1;
 const MAX_TRANSLATION_CONCURRENCY = 16;
 
 type Mode = 'strip' | 'page';
+type View = 'settings' | 'manga' | 'reader';
 type Notice = {
   title: string;
   body?: string;
   href?: string;
   hrefLabel?: string;
+};
+
+type ReaderProgress = {
+  pageIndex: number;
+  scrollRatio: number;
 };
 
 type ImportedFile = {
@@ -38,6 +44,34 @@ function isVisibleImageFile(file: File, parts: string[]): boolean {
   if (parts.some((part) => part.startsWith('.'))) return false;
   const extension = file.name.split('.').pop()?.toLowerCase() || '';
   return IMAGE_EXTENSIONS.has(extension);
+}
+
+function extractSortNumber(value: string): number | null {
+  const match = value.match(/\d+(?:\.\d+)?/);
+  if (!match) return null;
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function chapterNameSort(a: string, b: string): number {
+  const left = extractSortNumber(a);
+  const right = extractSortNumber(b);
+  if (left !== null && right !== null && left !== right) return left - right;
+  if (left !== null && right === null) return -1;
+  if (left === null && right !== null) return 1;
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function fileNameSort(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function csvValues(value: string): string[] {
+  return value.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function uniqueCsv(value: string): string {
+  return Array.from(new Set(csvValues(value))).join(', ');
 }
 
 function languageLabel(code: string, locale: string): string {
@@ -72,6 +106,7 @@ function resolveInitialUiLanguage(): UiLang {
 function App() {
   const [uiLang, setUiLang] = useState<UiLang>(resolveInitialUiLanguage);
   const [unlocked, setUnlocked] = useState(() => isDesktopRuntime());
+  const [activeView, setActiveView] = useState<View>('manga');
   const [password, setPassword] = useState('');
   const [manga, setManga] = useState<Manga[]>([]);
   const [selectedManga, setSelectedManga] = useState<Manga | null>(null);
@@ -104,6 +139,16 @@ function App() {
   });
   const [coverFile, setCoverFile] = useState<File | null>(null);
   const [createLanguage, setCreateLanguage] = useState<string>((localStorage.getItem('uiLang') as UiLang) || DEFAULT_LANGUAGE);
+  const [createCategory, setCreateCategory] = useState('');
+  const [createTags, setCreateTags] = useState('');
+  const [categoryOptions, setCategoryOptions] = useState(() => localStorage.getItem('mangaCategoryOptions') || '');
+  const [tagOptions, setTagOptions] = useState(() => localStorage.getItem('mangaTagOptions') || '');
+  const [mangaSearch, setMangaSearch] = useState('');
+  const [mangaCategoryFilter, setMangaCategoryFilter] = useState('');
+  const [mangaTagFilter, setMangaTagFilter] = useState('');
+  const [selectedMangaIds, setSelectedMangaIds] = useState<Set<string>>(() => new Set());
+  const [bulkCategory, setBulkCategory] = useState('');
+  const [bulkTags, setBulkTags] = useState('');
   const [draggedChapterId, setDraggedChapterId] = useState('');
   const [fullscreenReader, setFullscreenReader] = useState(false);
   const [failedImageIds, setFailedImageIds] = useState<Set<string>>(() => new Set());
@@ -113,6 +158,7 @@ function App() {
   const chaptersRef = useRef<Chapter[]>([]);
   const dragFinishedRef = useRef(false);
   const readerChromeTimerRef = useRef<number | null>(null);
+  const pendingReaderRestoreRef = useRef<ReaderProgress | null>(null);
   const translationEventSignaturesRef = useRef<Record<string, string>>({});
 
   const dir = langDir(uiLang);
@@ -153,10 +199,63 @@ function App() {
     }
     return Array.from(values);
   }, [catalogs, readLang, selectedManga?.default_language]);
+  const categoryList = useMemo(() => {
+    const values = new Set([...csvValues(categoryOptions), ...manga.map((item) => item.category).filter(Boolean)]);
+    return Array.from(values).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }, [categoryOptions, manga]);
+  const tagList = useMemo(() => {
+    const values = new Set([...csvValues(tagOptions), ...manga.flatMap((item) => csvValues(item.tags || ''))]);
+    return Array.from(values).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }, [tagOptions, manga]);
+  const filteredManga = useMemo(() => {
+    const query = mangaSearch.trim().toLowerCase();
+    return manga.filter((item) => {
+      const itemTags = csvValues(item.tags || '');
+      const matchesName = !query || item.name.toLowerCase().includes(query);
+      const matchesCategory = !mangaCategoryFilter || item.category === mangaCategoryFilter;
+      const matchesTag = !mangaTagFilter || itemTags.includes(mangaTagFilter);
+      return matchesName && matchesCategory && matchesTag;
+    });
+  }, [manga, mangaCategoryFilter, mangaSearch, mangaTagFilter]);
 
   function addLog(message: string) {
     const timestamp = new Date().toLocaleTimeString();
     setLogs((current) => [...current, `[ui ${timestamp}] ${message}`].slice(-200));
+  }
+
+  function progressKey(chapterId: string, lang: string, readerMode: Mode): string {
+    return `readerProgress:${chapterId}:${lang}:${readerMode}`;
+  }
+
+  function loadReaderProgress(chapterId: string, lang: string, readerMode: Mode): ReaderProgress {
+    const raw = localStorage.getItem(progressKey(chapterId, lang, readerMode));
+    if (!raw) return { pageIndex: 0, scrollRatio: 0 };
+    try {
+      const parsed = JSON.parse(raw) as Partial<ReaderProgress>;
+      return {
+        pageIndex: Math.max(0, Math.trunc(Number(parsed.pageIndex || 0))),
+        scrollRatio: Math.max(0, Math.min(1, Number(parsed.scrollRatio || 0)))
+      };
+    } catch (_error) {
+      return { pageIndex: 0, scrollRatio: 0 };
+    }
+  }
+
+  function saveReaderProgress(chapterId = selectedChapter?.id, lang = readLang, readerMode = mode) {
+    if (!chapterId) return;
+    const reader = readerRef.current;
+    const maxScroll = reader ? Math.max(1, reader.scrollHeight - reader.clientHeight) : 1;
+    const scrollRatio = readerMode === 'strip' && reader ? Math.max(0, Math.min(1, reader.scrollTop / maxScroll)) : 0;
+    const progress: ReaderProgress = {
+      pageIndex: readerMode === 'page' ? currentPageIndex : 0,
+      scrollRatio
+    };
+    localStorage.setItem(progressKey(chapterId, lang, readerMode), JSON.stringify(progress));
+  }
+
+  function switchView(view: View) {
+    saveReaderProgress();
+    setActiveView(view);
   }
 
   function showReaderChrome() {
@@ -193,6 +292,14 @@ function App() {
   }, [translationConcurrency]);
 
   useEffect(() => {
+    localStorage.setItem('mangaCategoryOptions', uniqueCsv(categoryOptions));
+  }, [categoryOptions]);
+
+  useEffect(() => {
+    localStorage.setItem('mangaTagOptions', uniqueCsv(tagOptions));
+  }, [tagOptions]);
+
+  useEffect(() => {
     const bridge = window.mangaManager;
     if (!bridge?.onBackendLog) return;
     bridge.onBackendLog((message) => {
@@ -218,6 +325,7 @@ function App() {
 
   useEffect(() => {
     const onFullscreenChange = () => {
+      saveReaderProgress();
       setFullscreenReader(document.fullscreenElement === readerRef.current);
     };
     document.addEventListener('fullscreenchange', onFullscreenChange);
@@ -239,6 +347,28 @@ function App() {
       return Math.min(index, pageCount - 1);
     });
   }, [read]);
+
+  useEffect(() => {
+    if (mode === 'page' && read?.chapter_id) {
+      saveReaderProgress(read.chapter_id, readLang, mode);
+    }
+  }, [currentPageIndex, mode, read?.chapter_id, readLang]);
+
+  useEffect(() => {
+    const progress = pendingReaderRestoreRef.current;
+    if (!read || !progress) return;
+    pendingReaderRestoreRef.current = null;
+    if (mode === 'page') {
+      setCurrentPageIndex(Math.min(progress.pageIndex, Math.max(0, read.pages.length - 1)));
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      const reader = readerRef.current;
+      if (!reader) return;
+      const maxScroll = Math.max(0, reader.scrollHeight - reader.clientHeight);
+      reader.scrollTop = maxScroll * progress.scrollRatio;
+    });
+  }, [read, mode]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -376,11 +506,14 @@ function App() {
       const created = await api.createManga({
         name: mangaName,
         homepage: '',
-        default_language: createLanguage || DEFAULT_LANGUAGE
+        default_language: createLanguage || DEFAULT_LANGUAGE,
+        category: createCategory,
+        tags: uniqueCsv(createTags)
       });
 
       let chapterIndex = 0;
-      for (const group of chapterMap.values()) {
+      const chapterGroups = Array.from(chapterMap.values()).sort((a, b) => chapterNameSort(a.title, b.title));
+      for (const group of chapterGroups) {
         chapterIndex += 1;
         const chapter = await api.createChapter(created.id, {
           title: group.title,
@@ -389,12 +522,12 @@ function App() {
         });
         const orderedFiles = group.files
           .slice()
-          .sort((a, b) => a.relativePath.localeCompare(b.relativePath))
+          .sort((a, b) => fileNameSort(a.relativePath, b.relativePath))
           .map((item) => item.file);
         await api.uploadImages(chapter.id, orderedFiles);
       }
 
-      const firstImage = chapterMap.values().next().value?.files?.[0]?.file || null;
+      const firstImage = chapterGroups[0]?.files?.slice().sort((a, b) => fileNameSort(a.relativePath, b.relativePath))[0]?.file || null;
       if (firstImage) {
         await api.uploadMangaCover(created.id, firstImage);
       }
@@ -437,15 +570,21 @@ function App() {
         default_language: createLanguage || DEFAULT_LANGUAGE,
         max_images: MAX_FOLDER_IMPORT_IMAGES
       });
+      const categorized = await api.updateManga(created.id, {
+        category: createCategory,
+        tags: uniqueCsv(createTags)
+      });
       const nextManga = await api.listManga();
       setManga(nextManga);
-      const nextSelected = nextManga.find((item) => item.id === created.id) || created;
+      const nextSelected = nextManga.find((item) => item.id === categorized.id) || categorized;
       setSelectedManga(nextSelected);
       const nextChapters = await api.listChapters(created.id);
       setChapters(nextChapters);
       setSelectedChapter(nextChapters[0] || null);
       setRead(null);
       setReadLang(nextSelected.default_language || DEFAULT_LANGUAGE);
+      setCreateCategory('');
+      setCreateTags('');
       setNotice({ title: labels.t('createManga'), body: nextSelected.name });
     } catch (error) {
       setNotice({ title: labels.t('actionFailed'), body: error instanceof Error ? error.message : String(error) });
@@ -464,6 +603,8 @@ function App() {
         name: String(data.get('name') || ''),
         homepage: '',
         default_language: String(data.get('default_language') || DEFAULT_LANGUAGE),
+        category: String(data.get('category') || ''),
+        tags: uniqueCsv(String(data.get('tags') || '')),
         coverImage: coverFile
       };
       const created = coverFile
@@ -476,6 +617,8 @@ function App() {
       setRead(null);
       setReadLang(created.default_language || DEFAULT_LANGUAGE);
       setCoverFile(null);
+      setCreateCategory('');
+      setCreateTags('');
       event.currentTarget.reset();
       setNotice({ title: labels.t('createManga'), body: created.name });
     } catch (error) {
@@ -486,6 +629,7 @@ function App() {
   }
 
   async function loadChapters(item: Manga) {
+    saveReaderProgress();
     setSelectedManga(item);
     const next = await api.listChapters(item.id);
     setChapters(next);
@@ -524,6 +668,69 @@ function App() {
     }
   }
 
+  async function updateSelectedManga(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedManga) return;
+    setPendingAction('update-manga');
+    setNotice({ title: labels.t('working') });
+    const data = new FormData(event.currentTarget);
+    try {
+      const updated = await api.updateManga(selectedManga.id, {
+        name: String(data.get('name') || selectedManga.name),
+        homepage: String(data.get('homepage') || ''),
+        default_language: String(data.get('default_language') || selectedManga.default_language || DEFAULT_LANGUAGE),
+        category: String(data.get('category') || ''),
+        tags: uniqueCsv(String(data.get('tags') || ''))
+      });
+      const nextManga = await api.listManga();
+      setManga(nextManga);
+      setSelectedManga(nextManga.find((item) => item.id === updated.id) || updated);
+      setReadLang(updated.default_language || DEFAULT_LANGUAGE);
+      setNotice({ title: labels.t('saveSettings'), body: updated.name });
+    } catch (error) {
+      setNotice({ title: labels.t('actionFailed'), body: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setPendingAction('');
+    }
+  }
+
+  function toggleBulkManga(mangaId: string) {
+    setSelectedMangaIds((current) => {
+      const next = new Set(current);
+      if (next.has(mangaId)) {
+        next.delete(mangaId);
+      } else {
+        next.add(mangaId);
+      }
+      return next;
+    });
+  }
+
+  async function applyBulkMetadata(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedMangaIds.size) return;
+    setPendingAction('bulk-metadata');
+    setNotice({ title: labels.t('working') });
+    try {
+      const ids = Array.from(selectedMangaIds);
+      await Promise.all(ids.map((mangaId) => api.updateManga(mangaId, {
+        category: bulkCategory,
+        tags: uniqueCsv(bulkTags)
+      })));
+      const nextManga = await api.listManga();
+      setManga(nextManga);
+      if (selectedManga) {
+        setSelectedManga(nextManga.find((item) => item.id === selectedManga.id) || selectedManga);
+      }
+      setSelectedMangaIds(new Set());
+      setNotice({ title: labels.t('saveSettings'), body: formatT(uiLang, 'bulkUpdated', { count: String(ids.length) }) });
+    } catch (error) {
+      setNotice({ title: labels.t('actionFailed'), body: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setPendingAction('');
+    }
+  }
+
   async function createChapter(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedManga) return;
@@ -538,6 +745,25 @@ function App() {
     setSelectedChapter(next.find((chapter) => chapter.id === created.id) || created);
     setRead(null);
     event.currentTarget.reset();
+  }
+
+  async function renameChapter(chapter: Chapter) {
+    const title = window.prompt(labels.t('chapterTitle'), chapter.title)?.trim();
+    if (!title || title === chapter.title) return;
+    setPendingAction(`update-chapter-${chapter.id}`);
+    try {
+      const updated = await api.updateChapter(chapter.id, { title });
+      const nextChapters = chapters.map((item) => item.id === updated.id ? updated : item);
+      setChapters(nextChapters);
+      if (selectedChapter?.id === updated.id) {
+        setSelectedChapter(updated);
+      }
+      setNotice({ title: labels.t('saveSettings'), body: updated.title });
+    } catch (error) {
+      setNotice({ title: labels.t('actionFailed'), body: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setPendingAction('');
+    }
   }
 
   async function deleteChapter(chapter: Chapter) {
@@ -600,13 +826,17 @@ function App() {
 
   async function openReader(chapter = selectedChapter, nextMode = mode, nextLang = readLang) {
     if (!chapter) return;
+    saveReaderProgress();
     setSelectedChapter(chapter);
     setMode(nextMode);
     setReadLang(nextLang);
+    setActiveView('reader');
     addLog(`open reader chapter=${chapter.title} id=${chapter.id} lang=${nextLang} default=${selectedManga?.default_language || ''} mode=${nextMode}`);
     const response = await api.readChapter(chapter.id, nextLang, nextMode);
+    const savedProgress = loadReaderProgress(chapter.id, nextLang, nextMode);
+    pendingReaderRestoreRef.current = savedProgress;
     setFailedImageIds(new Set());
-    setCurrentPageIndex(0);
+    setCurrentPageIndex(nextMode === 'page' ? Math.min(savedProgress.pageIndex, Math.max(0, response.pages.length - 1)) : 0);
     setRead(response);
     const missing = response.pages.filter((page) => page.missing).length;
     addLog(`read response chapter=${response.chapter_id} lang=${response.language} pages=${response.pages.length} missing=${missing}`);
@@ -811,6 +1041,17 @@ function App() {
           <span>{labels.t('app')}</span>
           <span className="version-pill">v{APP_VERSION}</span>
         </div>
+        <nav className="app-nav" aria-label="Primary">
+          <button type="button" className={activeView === 'settings' ? 'nav-button active' : 'nav-button'} onClick={() => switchView('settings')}>
+            <Settings size={16} /> {labels.t('settings')}
+          </button>
+          <button type="button" className={activeView === 'manga' ? 'nav-button active' : 'nav-button'} onClick={() => switchView('manga')}>
+            <Library size={16} /> {labels.t('mangaPage')}
+          </button>
+          <button type="button" className={activeView === 'reader' ? 'nav-button active' : 'nav-button'} onClick={() => switchView('reader')}>
+            <BookOpen size={16} /> {labels.t('reader')}
+          </button>
+        </nav>
         <div className="top-actions">
           <span className={translationConnected ? 'status-dot ok' : 'status-dot'}>{translationConnected ? labels.t('translationConnected') : labels.t('translationAccount')}</span>
           <Languages size={18} />
@@ -820,49 +1061,67 @@ function App() {
         </div>
       </header>
 
-      <section className="workspace">
-        <aside className="sidebar">
+      <section className={activeView === 'manga' ? 'workspace' : 'workspace single-workspace'}>
+        {activeView === 'manga' && <aside className="sidebar">
           <h2>{labels.t('library')}</h2>
           <div className="sidebar-meta">{manga.length} manga · {chapters.length} chapters</div>
-          {isDesktopRuntime() && (
-            <button className="file-button secondary folder-picker" type="button" onClick={importMangaFolderFromDesktop} disabled={pendingAction === 'import-folder'}>
-              <FolderOpen size={16} /> {labels.t('importFolder')}
-            </button>
-          )}
-          {!isDesktopRuntime() && (
-            <label className="file-button secondary folder-picker">
-              <FolderOpen size={16} /> {labels.t('importFolder')}
-              <input
-                type="file"
-                multiple
-                {...({ webkitdirectory: 'true' } as any)}
-                onChange={importMangaFolder}
-              />
-            </label>
-          )}
-          <form className="stack" onSubmit={createManga}>
-            <input name="name" placeholder={labels.t('mangaName')} required />
-            <select name="default_language" value={createLanguage} onChange={(event) => setCreateLanguage(event.target.value)} aria-label={labels.t('defaultLanguage')}>
-              {mangaLanguageOptions.map((lang) => (
-                <option key={lang} value={lang}>{languageOptionLabel(lang, uiLang)}</option>
-              ))}
+          <section className="sidebar-section">
+            <h3>{labels.t('newManga')}</h3>
+            {isDesktopRuntime() && (
+              <button className="file-button secondary folder-picker" type="button" onClick={importMangaFolderFromDesktop} disabled={pendingAction === 'import-folder'}>
+                <FolderOpen size={16} /> {labels.t('importFolder')}
+              </button>
+            )}
+            {!isDesktopRuntime() && (
+              <label className="file-button secondary folder-picker">
+                <FolderOpen size={16} /> {labels.t('importFolder')}
+                <input
+                  type="file"
+                  multiple
+                  {...({ webkitdirectory: 'true' } as any)}
+                  onChange={importMangaFolder}
+                />
+              </label>
+            )}
+            <form className="stack" onSubmit={createManga}>
+              <input name="name" placeholder={labels.t('mangaName')} required />
+              <select name="default_language" value={createLanguage} onChange={(event) => setCreateLanguage(event.target.value)} aria-label={labels.t('defaultLanguage')}>
+                {mangaLanguageOptions.map((lang) => (
+                  <option key={lang} value={lang}>{languageOptionLabel(lang, uiLang)}</option>
+                ))}
+              </select>
+              <input name="category" list="category-options" value={createCategory} onChange={(event) => setCreateCategory(event.target.value)} placeholder={labels.t('category')} />
+              <input name="tags" list="tag-options" value={createTags} onChange={(event) => setCreateTags(event.target.value)} placeholder={labels.t('tags')} />
+              <label className="file-button cover-picker">
+                <Upload size={16} /> {labels.t('coverImage')}
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(event) => setCoverFile(event.currentTarget.files?.[0] || null)}
+                />
+              </label>
+              {coverFile && <div className="file-hint">{coverFile.name}</div>}
+              <button type="submit" disabled={pendingAction === 'create-manga'}><FolderPlus size={16} /> {labels.t('createManga')}</button>
+            </form>
+          </section>
+          <section className="sidebar-section">
+            <h3>{labels.t('findManga')}</h3>
+            <input value={mangaSearch} onChange={(event) => setMangaSearch(event.target.value)} placeholder={labels.t('searchByName')} />
+            <select value={mangaCategoryFilter} onChange={(event) => setMangaCategoryFilter(event.target.value)}>
+              <option value="">{labels.t('allCategories')}</option>
+              {categoryList.map((category) => <option key={category} value={category}>{category}</option>)}
             </select>
-            <label className="file-button cover-picker">
-              <Upload size={16} /> {labels.t('coverImage')}
-              <input
-                type="file"
-                accept="image/*"
-                onChange={(event) => setCoverFile(event.currentTarget.files?.[0] || null)}
-              />
-            </label>
-            {coverFile && <div className="file-hint">{coverFile.name}</div>}
-            <button type="submit" disabled={pendingAction === 'create-manga'}><FolderPlus size={16} /> {labels.t('createManga')}</button>
-          </form>
+            <select value={mangaTagFilter} onChange={(event) => setMangaTagFilter(event.target.value)}>
+              <option value="">{labels.t('allTags')}</option>
+              {tagList.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+            </select>
+          </section>
           <div className="list">
-            {manga.map((item) => (
+            {filteredManga.map((item) => (
               <div className="library-item" key={item.id}>
                 <button className={selectedManga?.id === item.id ? 'row active' : 'row'} onClick={() => loadChapters(item)}>
-                  {item.name}
+                  <span>{item.name}</span>
+                  {(item.category || item.tags) && <small>{[item.category, item.tags].filter(Boolean).join(' · ')}</small>}
                 </button>
                 <button
                   type="button"
@@ -877,16 +1136,123 @@ function App() {
               </div>
             ))}
             {!manga.length && <div className="empty-state">{labels.t('createManga')}</div>}
+            {Boolean(manga.length && !filteredManga.length) && <div className="empty-state">{labels.t('noMangaFound')}</div>}
           </div>
-        </aside>
+        </aside>}
 
         <section className="main-panel">
+          <datalist id="category-options">
+            {categoryList.map((item) => <option key={item} value={item} />)}
+          </datalist>
+          <datalist id="tag-options">
+            {tagList.map((item) => <option key={item} value={item} />)}
+          </datalist>
+          {activeView === 'settings' && (
+            <section className="settings-page">
+              <div className="settings-grid">
+                <form className="settings-panel" onSubmit={(event) => {
+                  event.preventDefault();
+                  setCategoryOptions(uniqueCsv(categoryOptions));
+                  setTagOptions(uniqueCsv(tagOptions));
+                  setNotice({ title: labels.t('saveSettings') });
+                }}>
+                  <h2>{labels.t('librarySettings')}</h2>
+                  <label>
+                    <span>{labels.t('categoryNames')}</span>
+                    <textarea value={categoryOptions} onChange={(event) => setCategoryOptions(event.target.value)} placeholder={labels.t('categoryNames')} />
+                  </label>
+                  <label>
+                    <span>{labels.t('tagNames')}</span>
+                    <textarea value={tagOptions} onChange={(event) => setTagOptions(event.target.value)} placeholder={labels.t('tagNames')} />
+                  </label>
+                  <button type="submit"><Tags size={16} /> {labels.t('saveSettings')}</button>
+                </form>
+
+                <form className="settings-panel settings-panel-wide" onSubmit={applyBulkMetadata}>
+                  <h2>{labels.t('bulkMetadata')}</h2>
+                  <div className="bulk-manga-list">
+                    {manga.map((item) => (
+                      <label className="bulk-manga-item" key={item.id}>
+                        <input
+                          type="checkbox"
+                          checked={selectedMangaIds.has(item.id)}
+                          onChange={() => toggleBulkManga(item.id)}
+                        />
+                        <span>
+                          <strong>{item.name}</strong>
+                          <small>{[item.category, item.tags].filter(Boolean).join(' · ') || labels.t('uncategorized')}</small>
+                        </span>
+                      </label>
+                    ))}
+                    {!manga.length && <div className="empty-state">{labels.t('createManga')}</div>}
+                  </div>
+                  <input list="category-options" value={bulkCategory} onChange={(event) => setBulkCategory(event.target.value)} placeholder={labels.t('category')} />
+                  <input list="tag-options" value={bulkTags} onChange={(event) => setBulkTags(event.target.value)} placeholder={labels.t('tags')} />
+                  <button type="submit" disabled={!selectedMangaIds.size || pendingAction === 'bulk-metadata'}>
+                    <Tags size={16} /> {formatT(uiLang, 'applyToSelected', { count: String(selectedMangaIds.size) })}
+                  </button>
+                </form>
+
+                {catalogs && (
+                  <form className="settings-panel" onSubmit={connectTranslation}>
+                    <h2>{labels.t('translationAccount')}</h2>
+                    <input value={translationEmail} onChange={(event) => setTranslationEmail(event.target.value)} placeholder={labels.t('translationEmail')} />
+                    <input type="password" value={translationPassword} onChange={(event) => setTranslationPassword(event.target.value)} placeholder={labels.t('translationPassword')} />
+                    <input value={translationBaseUrl} onChange={(event) => setTranslationBaseUrl(event.target.value)} placeholder={labels.t('translationBaseUrl')} />
+                    <div className="settings-row">
+                      <button disabled={pendingAction === 'translation-login'}>{labels.t('connectTranslation')}</button>
+                      {isDesktopRuntime() && (
+                        <button type="button" className="secondary" onClick={connectBrowserTranslation} disabled={pendingAction === 'translation-browser-login'}>
+                          {labels.t('browserLogin')}
+                        </button>
+                      )}
+                    </div>
+                    {translationConnected && <span className="account-chip">{translationCreds?.email || translationCreds?.user_id}</span>}
+                  </form>
+                )}
+
+                {catalogs && (
+                  <div className="settings-panel">
+                    <h2>{labels.t('translationSettings')}</h2>
+                    <select value={sourceLang} onChange={(event) => setSourceLang(event.target.value)}>
+                      {catalogs.sourceLanguages.map((lang) => <option key={lang} value={lang}>{languageOptionLabel(lang, uiLang)}</option>)}
+                    </select>
+                    <select value={targetLang} onChange={(event) => setTargetLang(event.target.value)}>
+                      {catalogs.targetLanguages.map((lang) => <option key={lang} value={lang}>{languageOptionLabel(lang, uiLang)}</option>)}
+                    </select>
+                    <select value={modelId} onChange={(event) => setModelId(event.target.value)}>
+                      {catalogs.models.items.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}
+                    </select>
+                    <select value={fontId} onChange={(event) => setFontId(event.target.value)}>
+                      {catalogs.fonts.items.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}
+                    </select>
+                    <label className="inline-field">
+                      <span>{labels.t('translationConcurrency')}</span>
+                      <input
+                        type="number"
+                        min={MIN_TRANSLATION_CONCURRENCY}
+                        max={MAX_TRANSLATION_CONCURRENCY}
+                        step={1}
+                        value={translationConcurrency}
+                        onChange={(event) => setTranslationConcurrency(clampTranslationConcurrency(event.target.value))}
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
+          {activeView === 'manga' && (
+            <>
           <div className="chapter-tools">
             <div>
               <h2>{selectedManga?.name || labels.t('chapters')}</h2>
               {selectedManga && (
                 <div className="context-line">
-                  {languageOptionLabel(selectedManga.default_language, uiLang)} · {selectedManga.homepage || labels.t('homepage')}
+                  {languageOptionLabel(selectedManga.default_language, uiLang)}
+                  {selectedManga.category ? ` · ${selectedManga.category}` : ''}
+                  {selectedManga.tags ? ` · ${selectedManga.tags}` : ''}
                 </div>
               )}
               <form className="inline" onSubmit={createChapter}>
@@ -901,6 +1267,21 @@ function App() {
               <div><strong>{missingPages}</strong><span>{labels.t('missingTranslation')}</span></div>
             </div>
           </div>
+
+          {selectedManga && (
+            <form className="manga-editor" key={selectedManga.id} onSubmit={updateSelectedManga}>
+              <input name="name" defaultValue={selectedManga.name} placeholder={labels.t('mangaName')} required />
+              <input name="homepage" defaultValue={selectedManga.homepage} placeholder={labels.t('homepage')} />
+              <select name="default_language" defaultValue={selectedManga.default_language} aria-label={labels.t('defaultLanguage')}>
+                {mangaLanguageOptions.map((lang) => (
+                  <option key={lang} value={lang}>{languageOptionLabel(lang, uiLang)}</option>
+                ))}
+              </select>
+              <input name="category" list="category-options" defaultValue={selectedManga.category || ''} placeholder={labels.t('category')} />
+              <input name="tags" list="tag-options" defaultValue={selectedManga.tags || ''} placeholder={labels.t('tags')} />
+              <button type="submit" disabled={pendingAction === 'update-manga'}>{labels.t('saveManga')}</button>
+            </form>
+          )}
 
           <div className="chapter-list">
             {chapters.map((chapter) => (
@@ -939,6 +1320,21 @@ function App() {
                 </button>
                 <button
                   type="button"
+                  className="icon-button"
+                  title={labels.t('editChapter')}
+                  aria-label={labels.t('editChapter')}
+                  draggable={false}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void renameChapter(chapter);
+                  }}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  disabled={pendingAction === `update-chapter-${chapter.id}`}
+                >
+                  <Pencil size={14} />
+                </button>
+                <button
+                  type="button"
                   className="icon-button danger"
                   title={labels.t('deleteChapter')}
                   aria-label={labels.t('deleteChapter')}
@@ -968,20 +1364,6 @@ function App() {
                   }
                 }} />
               </label>
-              <select value={mode} onChange={(event) => openReader(selectedChapter, event.target.value as Mode, readLang)}>
-                <option value="strip">{labels.t('strip')}</option>
-                <option value="page">{labels.t('page')}</option>
-              </select>
-              <button type="button" className="secondary" onClick={() => openReader(selectedChapter, mode, defaultReadLanguage)}>
-                {labels.t('useDefaultLanguage')}
-              </button>
-              <select value={readLang} onChange={(event) => openReader(selectedChapter, mode, event.target.value)}>
-                {readLanguageOptions.map((lang) => (
-                  <option key={lang} value={lang}>
-                    {lang === defaultReadLanguage ? `${languageOptionLabel(lang, uiLang)} (${labels.t('defaultLanguage')})` : languageOptionLabel(lang, uiLang)}
-                  </option>
-                ))}
-              </select>
               <select value={format} onChange={(event) => setFormat(event.target.value)}>
                 {(catalogs?.outputFormats || ['webp', 'jpg', 'png']).map((item) => <option key={item}>{item}</option>)}
               </select>
@@ -992,45 +1374,14 @@ function App() {
 
           {selectedManga && catalogs && (
             <div className="translate-bar">
-              <form className="translation-account" onSubmit={connectTranslation}>
-                <strong>{labels.t('translationAccount')}</strong>
-                <input value={translationEmail} onChange={(event) => setTranslationEmail(event.target.value)} placeholder={labels.t('translationEmail')} />
-                <input type="password" value={translationPassword} onChange={(event) => setTranslationPassword(event.target.value)} placeholder={labels.t('translationPassword')} />
-                <input value={translationBaseUrl} onChange={(event) => setTranslationBaseUrl(event.target.value)} placeholder={labels.t('translationBaseUrl')} />
-                <button disabled={pendingAction === 'translation-login'}>{labels.t('connectTranslation')}</button>
-                {isDesktopRuntime() && (
-                  <button type="button" className="secondary" onClick={connectBrowserTranslation} disabled={pendingAction === 'translation-browser-login'}>
-                    {labels.t('browserLogin')}
-                  </button>
-                )}
-                {translationConnected && <span className="account-chip">{translationCreds?.email || translationCreds?.user_id}</span>}
-              </form>
-              <select value={sourceLang} onChange={(event) => setSourceLang(event.target.value)}>
-                {catalogs.sourceLanguages.map((lang) => <option key={lang} value={lang}>{languageOptionLabel(lang, uiLang)}</option>)}
-              </select>
-              <select value={targetLang} onChange={(event) => setTargetLang(event.target.value)}>
-                {catalogs.targetLanguages.map((lang) => <option key={lang} value={lang}>{languageOptionLabel(lang, uiLang)}</option>)}
-              </select>
-              <select value={modelId} onChange={(event) => setModelId(event.target.value)}>
-                {catalogs.models.items.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}
-              </select>
-              <select value={fontId} onChange={(event) => setFontId(event.target.value)}>
-                {catalogs.fonts.items.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}
-              </select>
-              <label className="inline-field">
-                <span>{labels.t('translationConcurrency')}</span>
-                <input
-                  type="number"
-                  min={MIN_TRANSLATION_CONCURRENCY}
-                  max={MAX_TRANSLATION_CONCURRENCY}
-                  step={1}
-                  value={translationConcurrency}
-                  onChange={(event) => setTranslationConcurrency(clampTranslationConcurrency(event.target.value))}
-                />
-              </label>
+              <span className={translationConnected ? 'status-dot ok' : 'status-dot'}>{translationConnected ? labels.t('translationConnected') : labels.t('translationAccount')}</span>
+              <span className="context-line inline-context">{formatT(uiLang, 'translationDetails', { source: sourceLang, target: targetLang, model: modelId })}</span>
               <button onClick={translateChapter} disabled={!selectedChapter || pendingAction === 'translate-chapter'}>{labels.t('translateChapter')}</button>
               <button onClick={translateManga} disabled={pendingAction === 'translate-manga'}>{labels.t('translateManga')}</button>
             </div>
+          )}
+
+            </>
           )}
 
           {notice && (
@@ -1055,37 +1406,53 @@ function App() {
             </div>
           </section>
 
-          <section
+          {activeView === 'reader' && <section
             ref={readerRef}
             className={`${mode === 'strip' ? 'reader strip-reader' : 'reader page-reader'}${fullscreenReader ? ' fullscreen-reader' : ''}${readerChromeVisible ? ' reader-chrome-visible' : ''}`}
             onMouseMove={handleReaderMouseMove}
+            onScroll={() => {
+              if (mode === 'strip') saveReaderProgress();
+            }}
           >
             {selectedChapter && (
               <div className="reader-nav" onFocus={showReaderChrome} onMouseMove={showReaderChrome} onMouseDown={showReaderChrome}>
-                <button className="secondary" onClick={() => previousChapter && openReader(previousChapter)} disabled={!previousChapter}>
-                  <ChevronLeft size={16} /> {labels.t('previousChapter')}
-                </button>
-                <select className="reader-language-select" value={readLang} onChange={(event) => openReader(selectedChapter, mode, event.target.value)}>
-                  {readLanguageOptions.map((lang) => (
-                    <option key={lang} value={lang}>
-                      {lang === defaultReadLanguage ? `${languageOptionLabel(lang, uiLang)} (${labels.t('defaultLanguage')})` : languageOptionLabel(lang, uiLang)}
-                    </option>
-                  ))}
-                </select>
-                <select className="reader-mode-select" value={mode} onChange={(event) => openReader(selectedChapter, event.target.value as Mode, readLang)}>
-                  <option value="strip">{labels.t('strip')}</option>
-                  <option value="page">{labels.t('page')}</option>
-                </select>
-                {mode === 'page' && (
-                  <span className="reader-page-count">{read ? `${currentPageIndex + 1}/${read.pages.length}` : '0/0'}</span>
-                )}
-                {!read && <button onClick={() => openReader()}>{labels.t('openReader')}</button>}
-                <button type="button" className="secondary" onClick={toggleReaderFullscreen}>
-                  {fullscreenReader ? <Minimize2 size={16} /> : <Maximize2 size={16} />} {labels.t('fullscreenReader')}
-                </button>
-                <button className="secondary" onClick={() => nextChapter && openReader(nextChapter)} disabled={!nextChapter}>
-                  {labels.t('nextChapter')} <ChevronRight size={16} />
-                </button>
+                <div className="reader-nav-row reader-options-row">
+                  <select className="reader-language-select" value={readLang} onChange={(event) => openReader(selectedChapter, mode, event.target.value)}>
+                    {readLanguageOptions.map((lang) => (
+                      <option key={lang} value={lang}>
+                        {lang === defaultReadLanguage ? `${languageOptionLabel(lang, uiLang)} (${labels.t('defaultLanguage')})` : languageOptionLabel(lang, uiLang)}
+                      </option>
+                    ))}
+                  </select>
+                  <select className="reader-mode-select" value={mode} onChange={(event) => openReader(selectedChapter, event.target.value as Mode, readLang)}>
+                    <option value="strip">{labels.t('strip')}</option>
+                    <option value="page">{labels.t('page')}</option>
+                  </select>
+                  <button type="button" className="secondary" onClick={toggleReaderFullscreen}>
+                    {fullscreenReader ? <Minimize2 size={16} /> : <Maximize2 size={16} />} {labels.t('fullscreenReader')}
+                  </button>
+                </div>
+                <div className="reader-nav-row reader-chapter-row">
+                  <button className="secondary" onClick={() => previousChapter && openReader(previousChapter)} disabled={!previousChapter}>
+                    <ChevronLeft size={16} /> {labels.t('previousChapter')}
+                  </button>
+                  <select
+                    className="reader-chapter-select"
+                    value={selectedChapter.id}
+                    onChange={(event) => {
+                      const chapter = chapters.find((item) => item.id === event.target.value);
+                      if (chapter) void openReader(chapter, mode, readLang);
+                    }}
+                    aria-label={labels.t('jumpToChapter')}
+                  >
+                    {chapters.map((chapter) => (
+                      <option key={chapter.id} value={chapter.id}>{chapter.title}</option>
+                    ))}
+                  </select>
+                  <button className="secondary" onClick={() => nextChapter && openReader(nextChapter)} disabled={!nextChapter}>
+                    {labels.t('nextChapter')} <ChevronRight size={16} />
+                  </button>
+                </div>
               </div>
             )}
             {read && (
@@ -1142,7 +1509,7 @@ function App() {
                 <span>{labels.t('openReader')}</span>
               </div>
             )}
-          </section>
+          </section>}
         </section>
       </section>
     </main>

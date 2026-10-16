@@ -4,6 +4,8 @@ export type Manga = {
   homepage: string;
   default_language: string;
   cover_image_id: string;
+  category: string;
+  tags: string;
   created_at: string;
 };
 
@@ -125,15 +127,19 @@ export const api = {
     request<TranslationCredentials>('/api/translate/auth/cookie', { method: 'POST', body: JSON.stringify(payload) }),
   catalogs: () => request<Catalogs>('/api/translate/catalogs'),
   listManga: () => request<Manga[]>('/api/manga'),
-  createManga: (payload: { name: string; homepage: string; default_language: string }) => request<Manga>('/api/manga', { method: 'POST', body: JSON.stringify(payload) }),
+  createManga: (payload: { name: string; homepage: string; default_language: string; category?: string; tags?: string }) => request<Manga>('/api/manga', { method: 'POST', body: JSON.stringify(payload) }),
+  updateManga: (mangaId: string, payload: Partial<Pick<Manga, 'name' | 'homepage' | 'default_language' | 'category' | 'tags'>>) =>
+    request<Manga>(`/api/manga/${mangaId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   deleteManga: (mangaId: string) => request<{ ok: boolean }>(`/api/manga/${mangaId}`, { method: 'DELETE' }),
   importFolder: (payload: { folder_path: string; default_language: string; max_images?: number }) =>
     request<Manga>('/api/desktop/import-folder', { method: 'POST', body: JSON.stringify(payload) }),
-  createMangaWithCover: (payload: { name: string; homepage: string; default_language: string; coverImage?: File | null }) => {
+  createMangaWithCover: (payload: { name: string; homepage: string; default_language: string; category?: string; tags?: string; coverImage?: File | null }) => {
     const form = new FormData();
     form.append('name', payload.name);
     form.append('homepage', payload.homepage);
     form.append('default_language', payload.default_language);
+    form.append('category', payload.category || '');
+    form.append('tags', payload.tags || '');
     if (payload.coverImage) {
       form.append('cover_image', payload.coverImage);
     }
@@ -146,6 +152,8 @@ export const api = {
   },
   listChapters: (mangaId: string) => request<Chapter[]>(`/api/manga/${mangaId}/chapters`),
   createChapter: (mangaId: string, payload: { title: string; number: string; sort_order: number }) => request<Chapter>(`/api/manga/${mangaId}/chapters`, { method: 'POST', body: JSON.stringify(payload) }),
+  updateChapter: (chapterId: string, payload: Partial<Pick<Chapter, 'title' | 'number' | 'sort_order'>>) =>
+    request<Chapter>(`/api/chapters/${chapterId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   deleteChapter: (chapterId: string) => request<{ ok: boolean }>(`/api/chapters/${chapterId}`, { method: 'DELETE' }),
   reorderChapters: (mangaId: string, chapterIds: string[]) =>
     request<Chapter[]>(`/api/manga/${mangaId}/chapters/order`, { method: 'PATCH', body: JSON.stringify({ chapter_ids: chapterIds }) }),

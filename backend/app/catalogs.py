@@ -23,7 +23,7 @@ async def fetch_translation_catalogs(settings: Settings) -> dict[str, Any]:
     local = load_local_catalogs()
     models = {"source": "fallback", "defaultModel": "CTD", "items": local["fallbackModels"]}
     fonts = {"source": "fallback", "defaultStyle": "auto", "items": local["fallbackFonts"]}
-    async with httpx.AsyncClient(timeout=8.0) as client:
+    async with httpx.AsyncClient(timeout=8.0, trust_env=False) as client:
         try:
             res = await client.get(f"{settings.translation_base_url.rstrip('/')}/api/v1/api/models", headers={"Accept": "application/json"})
             res.raise_for_status()
@@ -54,4 +54,3 @@ async def fetch_translation_catalogs(settings: Settings) -> dict[str, Any]:
         "fonts": fonts,
         "outputFormats": local["outputFormats"]
     }
-

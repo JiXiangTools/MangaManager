@@ -24,7 +24,7 @@ MangaManager 面向希望在一台机器上管理、阅读、翻译和导出个�
 
 ## 项目状态
 
-本项目正在积极开发中。当前应用版本为 `1.0.0`。
+本项目正在积极开发中。当前应用版本为 `1.0.1`。
 
 仓库目前包含应用源码、测试和 Windows 打包脚本。作为公开开源项目发布前，可按需补充项目治理文档。
 
@@ -49,22 +49,44 @@ data/
 
 ## 环境要求
 
-本地开发需要：
+打包后的 Windows 应用需要：
+
+- Windows 构建机器
+- Node.js 18+
+- 复制到 `windows/runtime/python` 的 Python 运行时
+- 复制到 `windows/runtime/postgresql` 的 PostgreSQL 运行时
+
+本地源码开发需要：
 
 - Python 3.11+
 - Node.js 18+
 - PostgreSQL 16+，用于接近生产环境的开发
 - Docker，可选，用于本地 PostgreSQL
 
-Windows 打包需要：
-
-- Windows 构建机器
-- 复制到 `windows/runtime/python` 的 Python 运行时
-- 复制到 `windows/runtime/postgresql` 的 PostgreSQL 运行时
-
 ## 快速启动
 
-启动 PostgreSQL：
+主要使用路径是先构建 Windows ZIP，然后通过 Windows 应用运行 MangaManager。应用会自动启动内嵌 PostgreSQL 数据库和 FastAPI 后端服务。
+
+在 Windows 构建机器上准备内嵌运行时：
+
+```powershell
+cd windows
+npm run prepare:runtime -- -PythonRoot "C:\Python311" -PostgresRoot "C:\PostgreSQL\16"
+```
+
+构建 Windows ZIP：
+
+```bash
+cd windows
+npm install
+npm run dist:win:zip
+```
+
+解压生成的 `windows/dist/MangaManager-<version>-win-x64.zip`，然后运行 `MangaManager.exe`。首次启动时，应用会在便携应用旁边的 `data/postgres` 下初始化 PostgreSQL，启动后端服务，等待 `/api/health` 就绪，并加载本地 Web UI。
+
+## 本地开发
+
+如果需要不打包直接进行源码开发，请手动启动 PostgreSQL：
 
 ```bash
 docker compose up -d postgres
@@ -100,7 +122,7 @@ npm run build
 
 ## Windows 桌面客户端
 
-Electron 客户端会启动本地 FastAPI 服务，等待 `/api/health` 就绪后加载本地 Web UI。在桌面模式下，API 请求会带上桌面客户端请求头，因此 Windows 应用不需要 Web 临时密码。浏览器和局域网访问仍然需要临时密码。
+Electron 客户端是打包后正常使用的运行入口。它会按需启动内嵌 PostgreSQL 进程，启动本地 FastAPI 服务，等待 `/api/health` 就绪后加载本地 Web UI。在桌面模式下，API 请求会带上桌面客户端请求头，因此 Windows 应用不需要 Web 临时密码。浏览器和局域网访问仍然需要临时密码。
 
 以开发模式运行桌面客户端：
 
@@ -125,7 +147,7 @@ windows/runtime/
     bin/createdb.exe
 ```
 
-在 Windows 构建机器上准备运行时：
+创建 ZIP 前，请在 Windows 构建机器上准备运行时：
 
 ```powershell
 cd windows
@@ -148,7 +170,7 @@ npm install
 npm run dist:win:zip
 ```
 
-`npm run dist:win:zip` 会构建前端、验证嵌入式运行时，并使用 Electron Builder 创建 Windows ZIP 包。
+`npm run dist:win:zip` 会构建前端、验证嵌入式运行时，并使用 Electron Builder 创建 Windows ZIP 包。请将这个 ZIP 分发给 Windows 用户；用户解压后启动 `MangaManager.exe`，无需手动启动 PostgreSQL 或后端。
 
 ## 翻译
 

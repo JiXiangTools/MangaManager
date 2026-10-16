@@ -36,6 +36,8 @@ class Manga(Base):
     homepage: Mapped[str] = mapped_column(String(1000), default="")
     default_language: Mapped[str] = mapped_column(String(16), default=DEFAULT_LANGUAGE)
     cover_image_id: Mapped[str] = mapped_column(String(32), default="")
+    category: Mapped[str] = mapped_column(String(255), default="")
+    tags: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     chapters: Mapped[list["Chapter"]] = relationship(back_populates="manga", cascade="all, delete-orphan", order_by="Chapter.sort_order")

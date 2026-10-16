@@ -10,6 +10,16 @@ class MangaCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     homepage: str = ""
     default_language: str = DEFAULT_LANGUAGE
+    category: str = ""
+    tags: str = ""
+
+
+class MangaUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    homepage: str | None = None
+    default_language: str | None = None
+    category: str | None = None
+    tags: str | None = None
 
 
 class FolderImportRequest(BaseModel):
@@ -24,6 +34,8 @@ class MangaOut(BaseModel):
     homepage: str
     default_language: str
     cover_image_id: str
+    category: str
+    tags: str
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -33,6 +45,12 @@ class ChapterCreate(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     number: str = ""
     sort_order: int = 0
+
+
+class ChapterUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    number: str | None = None
+    sort_order: int | None = None
 
 
 class ChapterOrderUpdate(BaseModel):

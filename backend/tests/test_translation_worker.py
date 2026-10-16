@@ -206,4 +206,5 @@ def test_async_proxy_submit_uses_manager_source_and_app_version(monkeypatch: Any
     assert result["plugin_id"] == "plugin-1"
     assert captured["url"] == "https://plugin-server.mangatranslate.com/api/v1/translated/async"
     assert captured["data"]["from"] == APP_SOURCE == "manager"
-    assert captured["data"]["version"] == APP_VERSION == "1.0.0"
+    assert APP_VERSION == "1.0.1"
+    assert captured["data"]["version"] == APP_VERSION

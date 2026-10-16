@@ -1,6 +1,6 @@
 {
   "name": "mangamanager-windows",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Windows launcher for MangaManager",
   "main": "src/main.js",
@@ -20,7 +20,9 @@
   "build": {
     "appId": "fun.kangen.mangamanager",
     "productName": "MangaManager",
-    "files": ["src/**/*"],
+    "files": [
+      "src/**/*"
+    ],
     "extraResources": [
       {
         "from": "../backend",
@@ -53,7 +55,9 @@
       "output": "dist"
     },
     "win": {
-      "target": ["zip"]
+      "target": [
+        "zip"
+      ]
     }
   }
 }
